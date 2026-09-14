@@ -18,16 +18,26 @@ const STATUS_KEY = "writing-style";
 
 const KEYWORD_PATTERNS: RegExp[] = [
 	/\bcaveat\b/i,
+	/\bconcede\b/i,
+	/\bhonestly\b/i,
+	/\bverdict\b/i,
 	/\bhygiene\b/i,
 	/\bload-bearing\b/i,
+	/\byte-identical\b/i,
+	/\bbyte-exact\b/i,
 	/\bcaution\b/i,
+	/\bchallenge\b/i,
 	/\bsay the word\b/i,
-	/\bwant me to\b/i,
+	/\bwant me\b/i,
 	/\bpush back\b/i,
-	/\btell me if you want\b/i,
+	/\bgate\b/i,
+	/\bimprecision\b/i,
+	/\btell me if\b/i,
+	/\b直白\b/i,
 	/\b顺带\b/i,
 	/\b弄混\b/i,
 	/\b给我\b/i,
+	/\b炸\b/i,
 	/\b—\b/i,
 ];
 
@@ -37,6 +47,8 @@ const ENDING_PATTERNS: RegExp[] = [
 	/\bnet\b/i,
 	/\bone\b/i,
 	/\bin short\b/i,
+	/\b所以\b/i,
+	/\b结论\b/i,
 ];
 
 const PREFERENCE = `Language style, the user appreciates Orwell's writing style in <Politics and English Language>, Chekhov's in <The Bishop>(Архиерей), and 汪曾祺、王小波 in general, you should always respond in such restraint writing:
@@ -105,6 +117,25 @@ function buildRequestContext(
 	return { systemPrompt: ctx.getSystemPrompt(), messages, tools };
 }
 
+enum Violation {
+	FAST = "fast",
+	KEYWORD = "keyword",
+}
+
+function findViolation(text: string): Violation | undefined {
+	// fast rewrite: common summary line, condescending opening, excessive bold markers
+	// slower rewrite: keyword match
+	const lastLine = text.trimEnd().split("\n").at(-1)?.trimStart() ?? "";
+	const lower = text.toLowerCase();
+	const fast =
+		ENDING_PATTERNS.some((p) => p.test(lastLine))
+		|| lower.startsWith("fair")
+		|| lower.startsWith("correct")
+		|| text.split("**").length - 1 >= 10; // >=5 bold pairs
+	if (fast) return Violation.FAST;
+	return KEYWORD_PATTERNS.some((p) => p.test(text)) ? Violation.KEYWORD : undefined;
+}
+
 function userMessage(text: string): Message {
 	return { role: "user", content: [{ type: "text", text }], timestamp: Date.now() };
 }
@@ -161,27 +192,26 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("message_end", async (event, ctx) => {
+		if (!ctx.model) return;
 		const msg = event.message;
 		if (msg.role !== "assistant" || msg.stopReason !== "stop") return;
 
 		const text = extractText(msg);
-		// Model self-signals a violation: "net/so" marker on the last line skips
-		// the regex gate and the judge call.
-		const lastLine = text.trimEnd().split("\n").at(-1)?.trimStart() ?? "";
-		const fastYes = ENDING_PATTERNS.find((p) => p.test(lastLine))?.source || text.toLowerCase().startsWith("fair") || text.toLowerCase().startsWith("correct");
-		const keywordHit = KEYWORD_PATTERNS.find((p) => p.test(text))?.source;
-		if (!fastYes && !keywordHit) {
+		const violation = findViolation(text);
+		if (!violation) {
 			stats.good += 1;
 			updateCounter(ctx);
 			return;
 		}
-		if (!ctx.model) return;
 
 		const model = ctx.model;
+		// TODO: fragile context building, find a way to reuse exact ctx
+		// * breaks after a compaction, didn't carry the summary
+		// * breaks on anthropic-compat path where 'strict: true' is appended to tools
 		const base = buildRequestContext(pi, ctx);
 
 		try {
-			const prefix = fastYes ? [...base.messages, msg] : await judge(ctx, model, base, msg);
+			const prefix = violation === Violation.FAST ? [...base.messages, msg] : await judge(ctx, model, base, msg);
 			if (!prefix) {
 				countGood(ctx);
 				return;
