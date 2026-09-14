@@ -11,7 +11,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { convertToLlm } from "@earendil-works/pi-coding-agent";
+import { convertToLlm, sessionEntryToContextMessages } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage, Message, Tool } from "@earendil-works/pi-ai";
 
 const STATUS_KEY = "writing-style";
@@ -30,6 +30,9 @@ const KEYWORD_PATTERNS: RegExp[] = [
 	/\bsay the word\b/i,
 	/\bwant me\b/i,
 	/\bpush back\b/i,
+	/\bcharacteriz\b/i,
+	/\bseam\b/i,
+	/\byour call\b/i,
 	/\bgate\b/i,
 	/\bimprecision\b/i,
 	/\btell me if\b/i,
@@ -38,6 +41,7 @@ const KEYWORD_PATTERNS: RegExp[] = [
 	/\b弄混\b/i,
 	/\b给我\b/i,
 	/\b炸\b/i,
+	/\b坑\b/i,
 	/\b—\b/i,
 ];
 
@@ -49,6 +53,7 @@ const ENDING_PATTERNS: RegExp[] = [
 	/\bin short\b/i,
 	/\b所以\b/i,
 	/\b结论\b/i,
+	/\b一句话\b/i,
 ];
 
 const PREFERENCE = `Language style, the user appreciates Orwell's writing style in <Politics and English Language>, Chekhov's in <The Bishop>(Архиерей), and 汪曾祺、王小波 in general, you should always respond in such restraint writing:
@@ -99,6 +104,7 @@ function extractText(message: AssistantMessage): string {
 function buildRequestContext(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
+	msg: AssistantMessage,
 ): { systemPrompt: string; messages: Message[]; tools: ToolScaffold[] } {
 	const allTools = pi.getAllTools();
 	const tools: ToolScaffold[] = pi
@@ -107,12 +113,14 @@ function buildRequestContext(
 		.filter((t) => t !== undefined)
 		.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
 
-	const messages = convertToLlm(
-		ctx.sessionManager
-			.getBranch()
-			.filter((e) => e.type === "message")
-			.map((e) => e.message),
-	);
+	// rebuild prefix from agent.state.messages(session-manager.ts buildSessionContext)
+	// the same way as agent, carry branch summaries and custom messages.
+	// on `message_end` fires before appendMessage, so current msg isn't persisted
+	// yet, append it.
+	const messages = convertToLlm([
+		...ctx.sessionManager.buildContextEntries().flatMap(sessionEntryToContextMessages),
+		msg,
+	]);
 
 	return { systemPrompt: ctx.getSystemPrompt(), messages, tools };
 }
@@ -156,10 +164,9 @@ async function judge(
 	ctx: ExtensionContext,
 	model: NonNullable<ExtensionContext["model"]>,
 	base: ReturnType<typeof buildRequestContext>,
-	msg: AssistantMessage,
 ): Promise<Message[] | undefined> {
 	ctx.ui.setStatus(STATUS_KEY, "judging style");
-	const judgeMessages = [...base.messages, msg, userMessage(JUDGE_PROMPT)];
+	const judgeMessages = [...base.messages, userMessage(JUDGE_PROMPT)];
 	const verdict = await ctx.modelRegistry.complete(
 		model,
 		{ systemPrompt: base.systemPrompt, messages: judgeMessages, tools: base.tools },
@@ -205,13 +212,13 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		const model = ctx.model;
-		// TODO: fragile context building, find a way to reuse exact ctx
-		// * breaks after a compaction, didn't carry the summary
+		// TODO: fragile context building, find a way to reuse exact ctx, or wait
+		// until pi exposes the exact ctx.
 		// * breaks on anthropic-compat path where 'strict: true' is appended to tools
-		const base = buildRequestContext(pi, ctx);
+		const base = buildRequestContext(pi, ctx, msg);
 
 		try {
-			const prefix = violation === Violation.FAST ? [...base.messages, msg] : await judge(ctx, model, base, msg);
+			const prefix = violation === Violation.FAST ? base.messages : await judge(ctx, model, base);
 			if (!prefix) {
 				countGood(ctx);
 				return;
