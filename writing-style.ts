@@ -53,7 +53,7 @@ const ENDING_PATTERNS: RegExp[] = [
 	/\bin short\b/i,
 	/\b所以\b/i,
 	/\b结论\b/i,
-	/\b一句话\b/i,
+	/\b要不要\b/i,
 ];
 
 const PREFERENCE = `Language style, the user appreciates Orwell's writing style in <Politics and English Language>, Chekhov's in <The Bishop>(Архиерей), and 汪曾祺、王小波 in general, you should always respond in such restraint writing:
