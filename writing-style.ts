@@ -5,14 +5,16 @@
  * when it violates the writing style rules from the system prompt:
  *   1. Regex gate. Fast, FP/FN tradeoffs, update over time.
  *   2. Judge call: same model, full session context, cached prefix.
- *   3. Rewrite call: replaces the message in place.
+ *   3. Rewrite call: replaces the text of the message in place, keeping its
+ *      thinking blocks.
  *
  * Extra call usage is ignored.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { convertToLlm, sessionEntryToContextMessages } from "@earendil-works/pi-coding-agent";
-import type { AssistantMessage, Message, Tool } from "@earendil-works/pi-ai";
+import { convertToLlm } from "@earendil-works/pi-coding-agent";
+import type { AssistantMessage, Context, Message } from "@earendil-works/pi-ai";
+import { getCurrentTools } from "@earendil-works/pi-ai";
 
 const STATUS_KEY = "writing-style";
 
@@ -37,7 +39,6 @@ const KEYWORD_PATTERNS: RegExp[] = [
 	/\bimprecision\b/i,
 	/\btell me if\b/i,
 	/\b直白\b/i,
-	/\b顺带\b/i,
 	/\b弄混\b/i,
 	/\b给我\b/i,
 	/\b炸\b/i,
@@ -51,8 +52,9 @@ const ENDING_PATTERNS: RegExp[] = [
 	/\bnet\b/i,
 	/\bone\b/i,
 	/\bin short\b/i,
+	/\b顺带\b/i,
 	/\b所以\b/i,
-	/\b结论\b/i,
+	/\b你告诉\b/i,
 	/\b要不要\b/i,
 ];
 
@@ -81,13 +83,6 @@ ${PREFERENCE}
 """
 Output only the rewritten message text, with no preamble or commentary.`;
 
-/** The subset of a tool definition that providers serialize. */
-interface ToolScaffold {
-	name: string;
-	description: string;
-	parameters: Tool["parameters"];
-}
-
 function extractText(message: AssistantMessage): string {
 	return message.content
 		.filter((c): c is { type: "text"; text: string } => c.type === "text")
@@ -96,33 +91,30 @@ function extractText(message: AssistantMessage): string {
 }
 
 /**
- * Rebuild the Context of pi's main request so the provider prompt cache
- * covers the shared prefix: same system prompt, tools in agent state order
- * with registry schemas, and the branch converted like the agent converts it.
- * Source of truth(Fragile reconstruction): pi repo `agent-loop.ts`, llmContext.
+ * Rebuild the Context of pi's main request so the provider prompt cache covers
+ * the shared prefix.
+ *
+ * Source of truth: `streamAssistantResponse` in agent-loop.ts (transformContext,
+ * convertToLlm, normalizeContext) over `sessionManager.buildSessionProjection()`.
+ * This skips transformContext's extension handlers and reproduces only its
+ * forced-prompt projection.
+ *
+ * - messages: the projection's non-system messages, plus the message
+ *   `message_end` is about to persist, converted as pi converts them.
+ * - systemPrompt: `ctx.getSystemPrompt()`, the only place a forced prompt shows.
+ * - tools: the transcript's own declarations, so constrained-sampling flags
+ *   survive and the provider serializes them as it does for the main request.
+ *
+ * Fragile reconstruction: it holds only while that pipeline holds. After a pi
+ * upgrade, compare this Context against a real request's payload.
  */
-function buildRequestContext(
-	pi: ExtensionAPI,
-	ctx: ExtensionContext,
-	msg: AssistantMessage,
-): { systemPrompt: string; messages: Message[]; tools: ToolScaffold[] } {
-	const allTools = pi.getAllTools();
-	const tools: ToolScaffold[] = pi
-		.getActiveTools()
-		.map((name) => allTools.find((t) => t.name === name))
-		.filter((t) => t !== undefined)
-		.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
-
-	// rebuild prefix from agent.state.messages(session-manager.ts buildSessionContext)
-	// the same way as agent, carry branch summaries and custom messages.
-	// on `message_end` fires before appendMessage, so current msg isn't persisted
-	// yet, append it.
-	const messages = convertToLlm([
-		...ctx.sessionManager.buildContextEntries().flatMap(sessionEntryToContextMessages),
-		msg,
-	]);
-
-	return { systemPrompt: ctx.getSystemPrompt(), messages, tools };
+function buildRequestContext(ctx: ExtensionContext, msg: AssistantMessage): Context {
+	const projection = ctx.sessionManager.buildSessionProjection();
+	return {
+		systemPrompt: ctx.getSystemPrompt(),
+		messages: convertToLlm([...projection.messages.filter((m) => m.role !== "system"), msg]),
+		tools: getCurrentTools(projection.messages),
+	};
 }
 
 enum Violation {
@@ -191,6 +183,26 @@ async function rewrite(
 	return extractText(response).trim() || undefined;
 }
 
+/**
+ * Replace the message text, keeping every thinking block: their signatures are
+ * the provider's replay data. The rewritten text takes over the first text
+ * block's signature, which identifies the replayed message item.
+ */
+export function rewriteMessage(msg: AssistantMessage, text: string): AssistantMessage {
+	const firstText = msg.content.find((c) => c.type === "text");
+	return {
+		...msg,
+		content: [
+			...msg.content.filter((c) => c.type !== "text"),
+			{
+				type: "text",
+				text,
+				...(firstText?.textSignature === undefined ? {} : { textSignature: firstText.textSignature }),
+			},
+		],
+	};
+}
+
 export default function (pi: ExtensionAPI) {
 	pi.on("session_start", (_event, ctx) => {
 		stats.good = 0;
@@ -212,10 +224,7 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		const model = ctx.model;
-		// TODO: fragile context building, find a way to reuse exact ctx, or wait
-		// until pi exposes the exact ctx.
-		// * breaks on anthropic-compat path where 'strict: true' is appended to tools
-		const base = buildRequestContext(pi, ctx, msg);
+		const base = buildRequestContext(ctx, msg);
 
 		try {
 			const prefix = violation === Violation.FAST ? base.messages : await judge(ctx, model, base);
@@ -234,12 +243,7 @@ export default function (pi: ExtensionAPI) {
 			updateCounter(ctx);
 
 			ctx.ui.notify("writing-style: rewrote final message", "info");
-			return {
-				message: {
-					...msg,
-					content: [{ type: "text" as const, text: rewritten }],
-				},
-			};
+			return { message: rewriteMessage(msg, rewritten) };
 		} catch (err) {
 			const detail = err instanceof Error ? err.message : String(err);
 			if (!ctx.signal?.aborted) {
