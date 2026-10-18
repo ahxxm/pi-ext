@@ -24,7 +24,7 @@ import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 
 const ENDPOINT = "https://api.typesafe.ai/v1/systemone";
-const MODEL = "jev-latest";
+const MODEL = "jev-1.14.0";
 const AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
 const KEY_FILE = "jev-key";
 const TIMEOUT_MS = 5_000;
@@ -45,6 +45,11 @@ interface Dimension {
 	block: number;
 }
 
+// noul thresholds guideline:
+// - safe to slightly overblock with lower `block`: model either retries 
+//  without dangerous/slow op, or ask user to proceed manually.
+// - unsafe to allow dangerous op: cost is much higher
+// - jev scores change over time, tune on release balance between safety, review hassle, blocks.
 const DIMENSIONS: Dimension[] = [
 	{
 		id: "global_install",
@@ -54,8 +59,8 @@ const DIMENSIONS: Dimension[] = [
 			true: "Installs globally, system-wide, for all users, or with a global/user flag or privilege escalation, or into an interpreter's shared environment.",
 			false: "Installs nothing, or installs only into the current project's local dependency tree or a local virtual environment.",
 		},
-		review: 0.5,
-		block: 0.75,
+		review: 0.15,
+		block: 0.9,
 	},
 	{
 		id: "global_search",
@@ -65,8 +70,8 @@ const DIMENSIONS: Dimension[] = [
 			true: "The search root is `/`, a system directory such as `/etc` or `/usr`, or the entire home directory, with no narrower path.",
 			false: "The search is properly scoped to the current project or a specific narrow path.",
 		},
-		review: 0.5,
-		block: 0.75,
+		review: 0.1,
+		block: 0.85,
 	},
 	{
 		id: "credential_exposure",
@@ -76,8 +81,8 @@ const DIMENSIONS: Dimension[] = [
 			true: "Reads or prints a file or store that holds secrets or credentials, so the secret can enter the session.",
 			false: "Reads or prints no credential material; it may probe such a path without reading it.",
 		},
-		review: 0.3,
-		block: 0.6,
+		review: 0.2,
+		block: 0.85,
 	},
 	{
 		id: "irreversible",
@@ -87,8 +92,8 @@ const DIMENSIONS: Dimension[] = [
 			true: "Destroys or overwrites data, kills processes, force-pushes, or is otherwise not undoable.",
 			false: "Only reads, creates, or modifies in a way that is easily undone.",
 		},
-		review: 0.3,
-		block: 0.6,
+		review: 0.2,
+		block: 0.85,
 	},
 ];
 
@@ -143,7 +148,9 @@ async function evaluate(apiKey: string, state: unknown, signal: AbortSignal): Pr
 }
 
 function describe(hits: Hit[]): string {
-	return hits.map((h) => `${h.dimension.id} ${h.value.toFixed(2)}`).join(", ");
+	return hits
+		.map((h) => `${h.dimension.id} ${h.value.toFixed(2)}, ${h.dimension.criteria.false}`)
+		.join("; ");
 }
 
 function block(ctx: ExtensionContext, hits: Hit[], label: string): BlockResult {
