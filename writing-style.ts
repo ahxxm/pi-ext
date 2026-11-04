@@ -21,6 +21,8 @@ const STATUS_KEY = "writing-style";
 const KEYWORD_PATTERNS: RegExp[] = [
 	/\bcaveat\b/i,
 	/\bconcede\b/i,
+	/\bloose\b/i,
+	/\blooser\b/i,
 	/\bhonestly\b/i,
 	/\bverdict\b/i,
 	/\bhygiene\b/i,
@@ -38,9 +40,12 @@ const KEYWORD_PATTERNS: RegExp[] = [
 	/\bgate\b/i,
 	/\bimprecision\b/i,
 	/\btell me if\b/i,
+	/\b说白\b/i,
 	/\b直白\b/i,
 	/\b弄混\b/i,
 	/\b给我\b/i,
+	/\b顺带\b/i,
+	/\b闭环\b/i,
 	/\b炸\b/i,
 	/\b坑\b/i,
 	/\b—\b/i,
@@ -52,14 +57,13 @@ const ENDING_PATTERNS: RegExp[] = [
 	/\bnet\b/i,
 	/\bone\b/i,
 	/\bin short\b/i,
-	/\b顺带\b/i,
 	/\b所以\b/i,
 	/\b你告诉\b/i,
 	/\b要不要\b/i,
 ];
 
 const PREFERENCE = `Language style, the user appreciates Orwell's writing style in <Politics and English Language>, Chekhov's in <The Bishop>(Архиерей), and 汪曾祺、王小波 in general, you should always respond in such restraint writing:
-• Use plain, brief, conversational language. Choose concrete, specific words; make every sentence carry information; minimize metaphor.
+• Use plain, brief, conversational language. Choose concrete, specific words; make every sentence carry information; minimize metaphor; remove all contrasive framing.
 • Each word must earn its place. Cut filler, padding and all mannered prose, for example, cut "So the short version is" so that it becomes a shorter version, replace almost all metaphors with plain language. Keep only the words that serve the user.
 Say each point exactly once, in consistent wording. End immediately when the content is complete.
 • Write in active voice: own statements, say who does what.
@@ -76,7 +80,7 @@ ${PREFERENCE}
 Answer with exactly one word: YES / NO`;
 
 const REWRITE_PROMPT = `The last end_turn assistant message above violates the writing style requirements.
-Rewrite it, strictly follow writing style requirements: preserve fact and opinion, every word in response must earn its place.
+Improve it, think harder, edit the draft before sending, preserve only necessary markers for readability, strictly follow writing style requirements: preserve fact and opinion, every word in response must earn its place.
 Writing style full requirements:
 """
 ${PREFERENCE}
