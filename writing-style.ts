@@ -43,6 +43,7 @@ const KEYWORD_PATTERNS: RegExp[] = [
 	/\b说白\b/i,
 	/\b直白\b/i,
 	/\b弄混\b/i,
+	/\b判据\b/i,
 	/\b给我\b/i,
 	/\b顺带\b/i,
 	/\b闭环\b/i,
