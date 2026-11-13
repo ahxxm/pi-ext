@@ -16,6 +16,8 @@
  * - API unreachable, or the response unusable: the call is blocked, matching
  *   pi's default that a throwing tool_call handler blocks execution. A guard
  *   that allows on failure is absent exactly when it is needed.
+ * - Auto mode, on by default: the review prompt is skipped, scores below
+ *   `block` pass. Evaluation failures still block. `/tool-guard-auto` toggles.
  */
 
 import { readFileSync } from "node:fs";
@@ -28,7 +30,6 @@ const MODEL = "jev-1.14.0";
 const AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
 const KEY_FILE = "jev-key";
 const TIMEOUT_MS = 5_000;
-const STATUS_KEY = "tool-guard";
 
 /** Longest string kept from a tool input before truncation. */
 const MAX_STRING = 2_000;
@@ -149,7 +150,7 @@ async function evaluate(apiKey: string, state: unknown, signal: AbortSignal): Pr
 
 function describe(hits: Hit[]): string {
 	return hits
-		.map((h) => `${h.dimension.id} ${h.value.toFixed(2)}, ${h.dimension.criteria.false}`)
+		.map((h) => `${h.dimension.id} ${h.value.toFixed(2)}, allowed if: ${h.dimension.criteria.false}`)
 		.join("; ");
 }
 
@@ -186,8 +187,18 @@ export default function toolGuard(pi: ExtensionAPI) {
 		return;
 	}
 
+	let auto = true;
+
+	pi.registerCommand("tool-guard-auto", {
+		description: "Toggle tool-guard auto: no review prompt, block threshold only",
+		handler: async (_args, ctx) => {
+			auto = !auto;
+			ctx.ui.setStatus("tool-guard", auto ? undefined : "review");
+			ctx.ui.notify(`tool-guard: auto ${auto ? "on" : "off"}`, auto ? "warning" : "info");
+		},
+	});
+
 	pi.on("tool_call", async (event, ctx) => {
-		ctx.ui.setStatus(STATUS_KEY, "checking tool call");
 		let answers: Answers;
 		try {
 			const state = { tool: event.toolName, input: trim(event.input), cwd: ctx.cwd };
@@ -195,8 +206,6 @@ export default function toolGuard(pi: ExtensionAPI) {
 		} catch (err) {
 			if (ctx.signal?.aborted) return undefined;
 			return blockUnevaluated(ctx, err);
-		} finally {
-			ctx.ui.setStatus(STATUS_KEY, undefined);
 		}
 
 		const hits: Hit[] = [];
@@ -208,6 +217,8 @@ export default function toolGuard(pi: ExtensionAPI) {
 
 		const blocked = hits.filter((h) => h.value >= h.dimension.block);
 		if (blocked.length > 0) return block(ctx, blocked, "blocked");
+
+		if (auto) return undefined;
 
 		const review = hits.filter((h) => h.value >= h.dimension.review);
 		if (review.length > 0) return reviewGate(ctx, event, review);

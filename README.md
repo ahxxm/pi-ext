@@ -2,7 +2,7 @@
 
 Experimental, to address my own needs:
 - `claude-md-system-prompt.ts`: use user-global `~/.claude/CLAUDE.md` as THE system prompt. *Only* enable when these aren't useful: cwd, skills, and project AGENTS.md.
-- `tool-guard.ts`: on every tool call, ask Jev whether the call is undesired, if so, review or block depending on score. Four noul questions, one per risk dimension: global install, whole-disk search, credential read, irreversible action. Put the key into `~/.pi/agent/jev-key` (or `$PI_CODING_AGENT_DIR/jev-key`); without the key it only allows.
+- `tool-guard.ts`: on every tool call, ask Jev whether the call is undesired, if so, review or block depending on score. Four noul questions, one per risk dimension: global install, whole-disk search, credential read, irreversible action. Auto mode is on by default: no review prompt, scores below `block` pass, `/tool-guard-auto` toggles it, and a failed evaluation blocks in either mode. Put the key into `~/.pi/agent/jev-key` (or `$PI_CODING_AGENT_DIR/jev-key`); without the key nothing is evaluated and every call is allowed.
 - `writing-style.ts`: remove nudge, summary, etc, the so called "mannered prose" by reusing session context and examine end_turn message. The judge and rewrite calls rebuild the request from `sessionManager.buildSessionProjection()` plus the transcript's own tool declarations, so they carry the same system prompt, tools, and messages as the main request and reuse its prompt cache. This adds `WTF M/N`("writing to fix") status line, where M is rewritten count, and N is total end_turn messages count.
 Known limit: 1. model prior too strong, the rewrite still starts with "Fair" and ends with a redundant summary line; 2. model justifies itself. 
 
