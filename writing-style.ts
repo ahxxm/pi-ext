@@ -63,14 +63,16 @@ const ENDING_PATTERNS: RegExp[] = [
 	/\b要不要\b/i,
 ];
 
-const PREFERENCE = `Language style, the user appreciates Orwell's writing style in <Politics and English Language>, Chekhov's in <The Bishop>(Архиерей), and 汪曾祺、王小波 in general, you should always respond in such restraint writing:
-• Use plain, brief, conversational language. Choose concrete, specific words; make every sentence carry information; minimize metaphor; remove all contrasive framing.
+const PREFERENCE = `Language style, the user appreciates Orwell's writing style in <Politics and English Language>, Chekhov's in <The Bishop>(Архиерей), and 汪曾祺、王小波 in general, you should always respond in such restrained writing:
+• Use plain, brief, conversational language. Choose concrete, specific words; make every sentence carry information; minimize metaphor; remove all contrastive framing.
 • Each word must earn its place. Cut filler, padding and all mannered prose, for example, cut "So the short version is" so that it becomes a shorter version, replace almost all metaphors with plain language. Keep only the words that serve the user.
 Say each point exactly once, in consistent wording. End immediately when the content is complete.
 • Write in active voice: own statements, say who does what.
-• Replace em dashes (—) with a comma, colon, or sentence restructure. 
+• Replace em dashes (—) with a comma, colon, or sentence restructure.
 • Use standard punctuation marks.
-• Minimal formatting with careful restraint: plain text and links by default. Only consider bold, bullet points, and headings when partitioning long responses.`
+• Minimal formatting with careful restraint: plain text and links by default. Only consider bold, bullet points, and headings when partitioning long responses.
+• Do not add disclaimers, caveats, notes about importance, or suggestions to be careful.
+• Only correct when user stated wrong fact explicitly, never make any corrections as presuppositions, nor on unstated premise.`
 
 const JUDGE_PROMPT = `Review last end_turn assistant message against the writing style rules.
 Judge strictly: does it contain distracting nudges, forced unnatural caveats, unnecessary summary, completely removable last line that doesn't affect answer completeness, or any other violations of the required style, such that we should improve the writing accordingly?
